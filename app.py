@@ -2,13 +2,18 @@ import sys
 import subprocess
 import os
 
+# --- PATH RESOLUTION ENGINE ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
 # --- AUTOMATIC MANUAL INSTALLER MATRIX ---
-# Yeh script check karega aur missing modules ko run-time par manual install karega
+# FastAPI aur Uvicorn (FastAPI ka server) ko manual list me add kiya hai
 required_libraries = {
-    "flask": "flask",
-    "flask_cors": "flask-cors",
+    "fastapi": "fastapi",
+    "pydantic": "pydantic",
     "geopy": "geopy",
-    "gunicorn": "gunicorn"
+    "uvicorn": "uvicorn"
 }
 
 for module_name, pip_name in required_libraries.items():
@@ -19,49 +24,50 @@ for module_name, pip_name in required_libraries.items():
         subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
         print(f"[SYSTEM] {pip_name} successfully install ho gaya!")
 
-# --- SARE REQUIRED IMPORTS AB SAFE HAIN ---
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+# --- FASTAPI SERVER ENGINE CORE ---
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # CORS middleware for FastAPI
+from pydantic import BaseModel
+from typing import List
 from main_backend import AaharBackendEngine
 
-app = Flask(__name__)
-CORS(app)  # Cross-Origin Resource Sharing active kiya taaki Shashwat ka frontend block na ho
+app = FastAPI(title="AaharAI Python Engine")
 
-# Core Backend computation module initiate kiya
-backend_engine = AaharBackendEngine()
+# CORS Setup: Taaki Node.js server ya frontend isko block na kare
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Real app me yahan front-end ka URL aayega, abhi ke liye public kiya hai
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.route('/api/predict_donation', methods=['POST'])
-def predict_donation():
+engine = AaharBackendEngine()
+
+class DonationRequest(BaseModel):
+    food_type: str
+    prep_time_str: str
+    current_temp: float
+    quantity: int
+    donor_coords: List[float]
+    ngo_coords: List[float]
+
+@app.post("/predict-and-route")
+def predict_and_route(req: DonationRequest):
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"status": "error", "message": "No data provided"}), 400
-            
-        # UI Inputs mapping variables
-        food_type = data.get("food_type")
-        prep_time_str = data.get("prep_time")
-        current_temp = float(data.get("current_temp", 30.0))
-        quantity = int(data.get("quantity", 1))
-        
-        # Coordinates input arrays
-        donor_coords = tuple(data.get("donor_coords"))
-        ngo_coords = tuple(data.get("ngo_coords"))
-        
-        # Process data with both sub-engines
-        result = backend_engine.process_donation_request(
-            food_type=food_type,
-            prep_time_str=prep_time_str,
-            current_temp=current_temp,
-            quantity=quantity,
-            donor_coords=donor_coords,
-            ngo_coords=ngo_coords
+        result = engine.process_donation_request(
+            food_type=req.food_type,
+            prep_time_str=req.prep_time_str,
+            current_temp=req.current_temp,
+            quantity=req.quantity,
+            donor_coords=tuple(req.donor_coords),
+            ngo_coords=tuple(req.ngo_coords)
         )
-        return jsonify(result), 200
-
+        return result
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Server Error: {str(e)}"}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == '__main__':
-    # Render system dynamically 'PORT' handle karta hai
+    import uvicorn
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    uvicorn.run("app:app", host='0.0.0.0', port=port, reload=False)
